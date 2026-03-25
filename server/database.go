@@ -132,6 +132,9 @@ func (db *Database) migrate() error {
 	if err == nil {
 		err = db.migration20220101070000(verbose)
 	}
+	if err == nil {
+		err = db.migration20260325000000(verbose)
+	}
 
 	return err
 }
@@ -462,6 +465,33 @@ func (db *Database) migration20220101070000(verbose bool) error {
 		}
 	}
 	return db.migrateWithSchema("20220101070000-v6.1.0", queries, verbose)
+}
+
+func (db *Database) migration20260325000000(verbose bool) error {
+	var hasColumn bool
+	rows, err := db.Sql.Query("pragma table_info(`rdioScannerCalls`)")
+	if err == nil {
+		for rows.Next() {
+			var cid int
+			var name, ctype string
+			var notnull int
+			var dflt any
+			var pk int
+			if err := rows.Scan(&cid, &name, &ctype, &notnull, &dflt, &pk); err == nil {
+				if name == "audioPath" {
+					hasColumn = true
+				}
+			}
+		}
+		rows.Close()
+	}
+	var queries []string
+	if !hasColumn {
+		queries = []string{
+			"alter table `rdioScannerCalls` add column `audioPath` text",
+		}
+	}
+	return db.migrateWithSchema("20260325000000-audio-on-disk", queries, verbose)
 }
 
 func (db *Database) prepareMigration() (bool, error) {

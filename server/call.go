@@ -26,6 +26,8 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -35,6 +37,7 @@ type Call struct {
 	Id             any       `json:"id"`
 	Audio          []byte    `json:"audio"`
 	AudioName      any       `json:"audioName"`
+	AudioPath      string    `json:"audioPath,omitempty"`
 	AudioType      any       `json:"audioType"`
 	DateTime       time.Time `json:"dateTime"`
 	Frequencies    any       `json:"frequencies"`
@@ -58,6 +61,50 @@ func NewCall() *Call {
 		Patches:     []uint{},
 		Sources:     []map[string]any{},
 	}
+}
+
+func (call *Call) AudioRelPath() string {
+	var name string
+	switch v := call.AudioName.(type) {
+	case string:
+		name = v
+	default:
+		name = fmt.Sprintf("%d_%d.m4a", call.Talkgroup, call.DateTime.Unix())
+	}
+	return filepath.Join("audio",
+		call.DateTime.Format("2006"),
+		call.DateTime.Format("01"),
+		call.DateTime.Format("02"),
+		name,
+	)
+}
+
+func (call *Call) SaveAudioToDisk(baseDir string) error {
+	if len(call.Audio) == 0 {
+		return errors.New("no audio data to save")
+	}
+	call.AudioPath = call.AudioRelPath()
+	absPath := filepath.Join(baseDir, call.AudioPath)
+	if err := os.MkdirAll(filepath.Dir(absPath), 0755); err != nil {
+		return fmt.Errorf("call.saveaudiotodisk: %v", err)
+	}
+	if err := os.WriteFile(absPath, call.Audio, 0644); err != nil {
+		return fmt.Errorf("call.saveaudiotodisk: %v", err)
+	}
+	return nil
+}
+
+func (call *Call) LoadAudioFromDisk(baseDir string) error {
+	if len(call.AudioPath) == 0 {
+		return nil
+	}
+	absPath := filepath.Join(baseDir, call.AudioPath)
+	b, err := os.ReadFile(absPath)
+	if err != nil {
+		return fmt.Errorf("call.loadaudiofromdisk: %v", err)
+	}
+	call.Audio = b
+	return nil
 }
 
 func (call *Call) IsValid() (ok bool, err error) {
@@ -148,6 +195,7 @@ func (calls *Calls) CheckDuplicate(call *Call, msTimeFrame uint, db *Database) b
 func (calls *Calls) GetCall(id uint, db *Database) (*Call, error) {
 	var (
 		audioName   sql.NullString
+		audioPath   sql.NullString
 		audioType   sql.NullString
 		dateTime    any
 		frequency   sql.NullFloat64
@@ -163,8 +211,8 @@ func (calls *Calls) GetCall(id uint, db *Database) (*Call, error) {
 
 	call := Call{Id: id}
 
-	query := fmt.Sprintf("select `audio`, `audioName`, `audioType`, `DateTime`, `frequencies`, `frequency`, `patches`, `source`, `sources`, `system`, `talkgroup` from `rdioScannerCalls` where `id` = %v", id)
-	err := db.Sql.QueryRow(query).Scan(&call.Audio, &audioName, &audioType, &dateTime, &frequencies, &frequency, &patches, &source, &sources, &call.System, &call.Talkgroup)
+	query := fmt.Sprintf("select `audio`, `audioName`, `audioPath`, `audioType`, `DateTime`, `frequencies`, `frequency`, `patches`, `source`, `sources`, `system`, `talkgroup` from `rdioScannerCalls` where `id` = %v", id)
+	err := db.Sql.QueryRow(query).Scan(&call.Audio, &audioName, &audioPath, &audioType, &dateTime, &frequencies, &frequency, &patches, &source, &sources, &call.System, &call.Talkgroup)
 	if err != nil && err != sql.ErrNoRows {
 		return nil, fmt.Errorf("getcall: %v, %v", err, query)
 	}
@@ -173,8 +221,18 @@ func (calls *Calls) GetCall(id uint, db *Database) (*Call, error) {
 		call.AudioName = audioName.String
 	}
 
+	if audioPath.Valid {
+		call.AudioPath = audioPath.String
+	}
+
 	if audioType.Valid {
 		call.AudioType = audioType.String
+	}
+
+	if len(call.AudioPath) > 0 && len(call.Audio) == 0 {
+		if err := call.LoadAudioFromDisk(db.Config.BaseDir); err != nil {
+			return nil, fmt.Errorf("getcall: %v", err)
+		}
 	}
 
 	if frequency.Valid && frequency.Float64 > 0 {
@@ -217,7 +275,19 @@ func (calls *Calls) Prune(db *Database, pruneDays uint) error {
 	defer calls.mutex.Unlock()
 
 	date := time.Now().Add(-24 * time.Hour * time.Duration(pruneDays)).Format(db.DateTimeFormat)
-	_, err := db.Sql.Exec("delete from `rdioScannerCalls` where `dateTime` < ?", date)
+
+	rows, err := db.Sql.Query("select `audioPath` from `rdioScannerCalls` where `dateTime` < ?", date)
+	if err == nil {
+		for rows.Next() {
+			var audioPath sql.NullString
+			if err := rows.Scan(&audioPath); err == nil && audioPath.Valid && len(audioPath.String) > 0 {
+				os.Remove(filepath.Join(db.Config.BaseDir, audioPath.String))
+			}
+		}
+		rows.Close()
+	}
+
+	_, err = db.Sql.Exec("delete from `rdioScannerCalls` where `dateTime` < ?", date)
 
 	return err
 }
@@ -447,6 +517,12 @@ func (calls *Calls) WriteCall(call *Call, db *Database) (uint, error) {
 		return fmt.Errorf("call.write: %s", err.Error())
 	}
 
+	if len(call.Audio) > 0 {
+		if err = call.SaveAudioToDisk(db.Config.BaseDir); err != nil {
+			return 0, formatError(err)
+		}
+	}
+
 	switch v := call.Frequencies.(type) {
 	case []map[string]any:
 		if b, err = json.Marshal(v); err == nil {
@@ -474,7 +550,7 @@ func (calls *Calls) WriteCall(call *Call, db *Database) (uint, error) {
 		}
 	}
 
-	if res, err = db.Sql.Exec("insert into `rdioScannerCalls` (`id`, `audio`, `audioName`, `audioType`, `dateTime`, `frequencies`, `frequency`, `patches`, `source`, `sources`, `system`, `talkgroup`) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", call.Id, call.Audio, call.AudioName, call.AudioType, call.DateTime, frequencies, call.Frequency, patches, call.Source, sources, call.System, call.Talkgroup); err != nil {
+	if res, err = db.Sql.Exec("insert into `rdioScannerCalls` (`id`, `audio`, `audioName`, `audioPath`, `audioType`, `dateTime`, `frequencies`, `frequency`, `patches`, `source`, `sources`, `system`, `talkgroup`) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", call.Id, []byte{}, call.AudioName, call.AudioPath, call.AudioType, call.DateTime, frequencies, call.Frequency, patches, call.Source, sources, call.System, call.Talkgroup); err != nil {
 		return 0, formatError(err)
 	}
 

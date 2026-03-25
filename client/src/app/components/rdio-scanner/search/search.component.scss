@@ -71,12 +71,34 @@
     }
   }
 
+  .select-col {
+    flex: 0 0 32px !important;
+    padding: 0 !important;
+  }
+
+  ::ng-deep .mat-checkbox-inner-container-no-side-margin {
+    margin-left: 10px;
+    margin-right: 0;
+  }
+
   .paginator {
     align-items: center;
     display: flex;
     flex-direction: row;
     justify-content: space-between;
-    padding-left: 8px;;
+    padding-left: 8px;
+
+    .download-controls {
+      align-items: center;
+      display: flex;
+      flex-direction: row;
+      gap: 8px;
+
+      .bulk-progress {
+        font-size: 12px;
+        opacity: 0.7;
+      }
+    }
   }
 
   .spin {

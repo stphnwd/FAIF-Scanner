@@ -108,6 +108,7 @@ export interface RdioScannerConfig {
 
 export interface RdioScannerEvent {
     auth?: boolean;
+    bulkDownloadProgress?: { current: number; total: number } | undefined;
     categories?: RdioScannerCategory[];
     call?: RdioScannerCall;
     config?: RdioScannerConfig;

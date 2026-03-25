@@ -46,6 +46,7 @@ declare global {
 }
 
 enum WebsocketCallFlag {
+    BulkDownload = 'b',
     Download = 'd',
     Play = 'p',
 }
@@ -103,6 +104,10 @@ export class RdioScannerService implements OnDestroy {
     private livefeedMode = RdioScannerLivefeedMode.Offline;
     private livefeedPaused = false;
 
+    private bulkDownloadQueue: number[] = [];
+    private bulkDownloadResults: RdioScannerCall[] = [];
+    private bulkDownloadTotal = 0;
+
     private playbackList: RdioScannerPlaybackList | undefined;
     private playbackPending: number | undefined;
     private playbackRefreshing = false;
@@ -127,6 +132,15 @@ export class RdioScannerService implements OnDestroy {
 
     authenticate(password: string): void {
         this.sendtoWebsocket(WebsocketCommand.Pin, window.btoa(password));
+    }
+
+    bulkDownload(ids: number[]): void {
+        if (ids.length === 0) return;
+        this.bulkDownloadQueue = [...ids];
+        this.bulkDownloadResults = [];
+        this.bulkDownloadTotal = ids.length;
+        this.event.emit({ bulkDownloadProgress: { current: 0, total: this.bulkDownloadTotal } });
+        this.fetchNextBulkDownload();
     }
 
     avoid(options: RdioScannerAvoidOptions = {}): void {
@@ -818,6 +832,52 @@ export class RdioScannerService implements OnDestroy {
         }
     }
 
+    private fetchNextBulkDownload(): void {
+        if (this.bulkDownloadQueue.length === 0) {
+            this.finalizeBulkDownload();
+            return;
+        }
+        const id = this.bulkDownloadQueue.shift()!;
+        this.getCall(id, WebsocketCallFlag.BulkDownload);
+    }
+
+    private async finalizeBulkDownload(): Promise<void> {
+        const JSZip = (await import('jszip')).default;
+        const zip = new JSZip();
+
+        for (const call of this.bulkDownloadResults) {
+            if (call.audio) {
+                const data = new Uint8Array(call.audio.data);
+                const name = call.audioName || `call-${call.id}.m4a`;
+                zip.file(name, data);
+            }
+        }
+
+        const blob = await zip.generateAsync({ type: 'blob' });
+        const now = new Date();
+        const ts = now.getFullYear().toString() +
+            String(now.getMonth() + 1).padStart(2, '0') +
+            String(now.getDate()).padStart(2, '0') + '-' +
+            String(now.getHours()).padStart(2, '0') +
+            String(now.getMinutes()).padStart(2, '0') +
+            String(now.getSeconds()).padStart(2, '0');
+        const fileName = `faif-calls-${ts}.zip`;
+
+        const url = URL.createObjectURL(blob);
+        const el = this.document.createElement('a');
+        el.style.display = 'none';
+        el.setAttribute('href', url);
+        el.setAttribute('download', fileName);
+        this.document.body.appendChild(el);
+        el.click();
+        this.document.body.removeChild(el);
+        URL.revokeObjectURL(url);
+
+        this.bulkDownloadResults = [];
+        this.bulkDownloadTotal = 0;
+        this.event.emit({ bulkDownloadProgress: undefined });
+    }
+
     private getCall(id: number, flags?: WebsocketCallFlag): void {
         this.sendtoWebsocket(WebsocketCommand.Call, `${id}`, flags);
     }
@@ -885,7 +945,13 @@ export class RdioScannerService implements OnDestroy {
                         const call: RdioScannerCall = message[1];
                         const flag: string = message[2];
 
-                        if (flag === WebsocketCallFlag.Download) {
+                        if (flag === WebsocketCallFlag.BulkDownload) {
+                            this.bulkDownloadResults.push(call);
+                            const current = this.bulkDownloadResults.length;
+                            this.event.emit({ bulkDownloadProgress: { current, total: this.bulkDownloadTotal } });
+                            this.fetchNextBulkDownload();
+
+                        } else if (flag === WebsocketCallFlag.Download) {
                             this.download(message[1]);
 
                         } else if (flag === WebsocketCallFlag.Play && call.id === this.playbackPending) {

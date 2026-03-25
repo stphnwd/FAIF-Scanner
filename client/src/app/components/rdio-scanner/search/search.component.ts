@@ -39,6 +39,8 @@ import { RdioScannerService } from '../rdio-scanner.service';
     templateUrl: './search.component.html',
 })
 export class RdioScannerSearchComponent implements OnDestroy {
+    bulkDownloadProgress: { current: number; total: number } | undefined;
+
     call: RdioScannerCall | undefined;
     callPending: number | undefined;
 
@@ -54,6 +56,9 @@ export class RdioScannerSearchComponent implements OnDestroy {
     livefeedOnline = false;
     livefeedPlayback = false;
 
+    pageSize: number;
+    pageSizeOptions = [10, 25, 50, 75, 100];
+
     playbackList: RdioScannerPlaybackList | undefined;
 
     optionsGroup: string[] = [];
@@ -65,6 +70,8 @@ export class RdioScannerSearchComponent implements OnDestroy {
 
     results = new BehaviorSubject(new Array<RdioScannerCall | null>(10));
     resultsPending = false;
+
+    selectedCalls = new Set<number>();
 
     time12h = false;
 
@@ -82,7 +89,16 @@ export class RdioScannerSearchComponent implements OnDestroy {
         private rdioScannerService: RdioScannerService,
         private ngChangeDetectorRef: ChangeDetectorRef,
         private ngFormBuilder: FormBuilder,
-    ) { }
+    ) {
+        const saved = localStorage.getItem('rdio-pageSize');
+        this.pageSize = saved ? parseInt(saved, 10) : 10;
+        this.results = new BehaviorSubject(new Array<RdioScannerCall | null>(this.pageSize));
+    }
+
+    downloadSelected(): void {
+        if (this.selectedCalls.size === 0) return;
+        this.rdioScannerService.bulkDownload(Array.from(this.selectedCalls));
+    }
 
     download(id: number): void {
         this.rdioScannerService.loadAndDownload(id);
@@ -102,6 +118,38 @@ export class RdioScannerSearchComponent implements OnDestroy {
 
     ngOnDestroy(): void {
         this.eventSubscription.unsubscribe();
+    }
+
+    onPageChange(): void {
+        if (this.paginator && this.paginator.pageSize !== this.pageSize) {
+            this.pageSize = this.paginator.pageSize;
+            localStorage.setItem('rdio-pageSize', String(this.pageSize));
+            this.results.next(new Array<RdioScannerCall | null>(this.pageSize));
+        }
+        this.selectedCalls.clear();
+        this.refreshResults();
+    }
+
+    isAllSelected(): boolean {
+        const visible = this.results.value.filter((c): c is RdioScannerCall => c !== null);
+        return visible.length > 0 && visible.every((c) => this.selectedCalls.has(c.id));
+    }
+
+    toggleSelectAll(checked: boolean): void {
+        const visible = this.results.value.filter((c): c is RdioScannerCall => c !== null);
+        if (checked) {
+            visible.forEach((c) => this.selectedCalls.add(c.id));
+        } else {
+            visible.forEach((c) => this.selectedCalls.delete(c.id));
+        }
+    }
+
+    toggleSelect(id: number, checked: boolean): void {
+        if (checked) {
+            this.selectedCalls.add(id);
+        } else {
+            this.selectedCalls.delete(id);
+        }
     }
 
     play(id: number): void {
@@ -286,6 +334,13 @@ export class RdioScannerSearchComponent implements OnDestroy {
     }
 
     private eventHandler(event: RdioScannerEvent): void {
+        if ('bulkDownloadProgress' in event) {
+            this.bulkDownloadProgress = event.bulkDownloadProgress;
+            if (!this.bulkDownloadProgress) {
+                this.selectedCalls.clear();
+            }
+        }
+
         if ('call' in event) {
             this.call = event.call;
 
