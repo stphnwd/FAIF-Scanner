@@ -31,6 +31,15 @@
             </mat-expansion-panel-header>
             <rdio-scanner-admin-tools #toolsComponent (config)="configComponent.reset($event, { dirty: true }); configPanel.open()"></rdio-scanner-admin-tools>
         </mat-expansion-panel>
+        <mat-expansion-panel>
+            <mat-expansion-panel-header>
+                <mat-panel-title>
+                    <mat-icon>download</mat-icon>
+                    RR Import
+                </mat-panel-title>
+            </mat-expansion-panel-header>
+            <rdio-scanner-admin-rr-import (config)="configComponent.reset($event, { dirty: true }); configPanel.open()"></rdio-scanner-admin-rr-import>
+        </mat-expansion-panel>
         <mat-expansion-panel hideToggle (click)="logout()">
             <mat-expansion-panel-header>
                 <mat-panel-title>

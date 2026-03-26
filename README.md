@@ -47,8 +47,6 @@ Requires a RadioReference API key and Premium subscription.
    sudo systemctl restart faif-scanner-go
    ```
 
-Or enter a custom key in the admin UI under **Config > RR API Key**.
-
 ## Environment Variables
 
 | Variable | Required | Description |

@@ -5,6 +5,8 @@
 /dist
 
 # FAIF-Scanner build and runtime
+# WARNING: Never commit RR API keys, passwords, or credentials to this repo.
+# Set RR_APP_KEY via systemd Environment= directive, not in source files.
 /rdio-scanner
 /rdio-scanner.db
 rdio-scanner.db-shm

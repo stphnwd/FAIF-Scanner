@@ -33,6 +33,10 @@ import (
 	"gopkg.in/ini.v1"
 )
 
+// DefaultRRAppKey is loaded from the RR_APP_KEY environment variable at startup.
+// If set, it serves as the fallback when no custom key is stored in the database.
+var DefaultRRAppKey = os.Getenv("RR_APP_KEY")
+
 const (
 	DbTypeMariadb string = "mariadb"
 	DbTypeMysql   string = "mysql"

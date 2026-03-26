@@ -1,0 +1,257 @@
+<!-- Connection Bar -->
+<div class="connection-bar">
+    <mat-form-field appearance="outline">
+        <mat-label>Username</mat-label>
+        <input matInput [(ngModel)]="username" [disabled]="connected && !userEditedPassword">
+    </mat-form-field>
+    <mat-form-field appearance="outline">
+        <mat-label>Password</mat-label>
+        <input matInput type="password" [(ngModel)]="password"
+            [disabled]="connected && !userEditedPassword"
+            (input)="onPasswordInput()">
+    </mat-form-field>
+    <div class="connect-actions">
+        <button mat-raised-button color="primary"
+            [disabled]="connecting || (connected && !userEditedPassword) || (apiKeyChecked && !hasApiKey) || !username || !password"
+            (click)="connect()">
+            {{ connecting ? 'Connecting...' : (connected && !userEditedPassword) ? 'Connected' : 'Connect' }}
+        </button>
+        <mat-checkbox [(ngModel)]="saveCredentials" [disabled]="connected && !userEditedPassword">Save credentials</mat-checkbox>
+    </div>
+</div>
+<div *ngIf="hasSavedCreds && !connected" class="saved-hint">
+    Using saved credentials.
+    <a (click)="clearSavedCreds()">Clear saved credentials</a>
+</div>
+<div *ngIf="connectError" class="no-key-warning">
+    {{ connectError }}
+</div>
+<div *ngIf="apiKeyChecked && !hasApiKey" class="no-key-warning">
+    RR Import requires a RadioReference API key.
+    Set <code>RR_APP_KEY</code> in your systemd service environment, then restart the service.
+</div>
+
+<ng-container *ngIf="connected">
+    <!-- Row 1: Location -->
+    <div class="location-bar">
+        <mat-form-field appearance="outline">
+            <mat-label>Country</mat-label>
+            <mat-select [(value)]="selectedCountry" (selectionChange)="onCountryChange()">
+                <mat-option *ngFor="let c of countries" [value]="c.id">{{ c.name }}</mat-option>
+            </mat-select>
+        </mat-form-field>
+        <mat-form-field appearance="outline">
+            <mat-label>State</mat-label>
+            <mat-select [(value)]="selectedState" (selectionChange)="onStateChange()">
+                <mat-option *ngFor="let s of states" [value]="s.id">{{ s.name }}</mat-option>
+            </mat-select>
+        </mat-form-field>
+        <mat-form-field appearance="outline">
+            <mat-label>County</mat-label>
+            <mat-select [(value)]="selectedCounty" (selectionChange)="onCountyChange()">
+                <mat-option *ngFor="let c of counties" [value]="c.id">{{ c.name }}</mat-option>
+            </mat-select>
+        </mat-form-field>
+    </div>
+
+    <!-- Row 2: Mode buttons -->
+    <div class="select-bar" *ngIf="selectedCounty">
+        <button mat-stroked-button [disabled]="loading"
+            [color]="dataMode === 'conventional' ? 'primary' : ''"
+            (click)="selectConventional()">
+            Conventional Frequencies
+        </button>
+        <button mat-stroked-button [disabled]="loading"
+            [color]="dataMode === 'agencies' ? 'primary' : ''"
+            (click)="selectAgenciesMode()">
+            Agencies
+        </button>
+        <button mat-stroked-button [disabled]="!systems.length || loading"
+            [color]="dataMode === 'trunksystems' ? 'primary' : ''"
+            (click)="selectTrunkSystemsMode()">
+            Trunk Systems
+        </button>
+        <button mat-stroked-button [disabled]="loading"
+            [color]="dataMode === 'nationwide' ? 'primary' : ''"
+            (click)="selectNationwide()">
+            NationWide
+        </button>
+    </div>
+
+    <!-- Row 3: Conditional selector -->
+    <mat-form-field *ngIf="dataMode === 'agencies' && agencies.length" appearance="outline" class="full-width">
+        <mat-label>Agency</mat-label>
+        <mat-select [(value)]="selectedAgency" (selectionChange)="onAgencyChange()">
+            <mat-option *ngFor="let a of agencies" [value]="a.id">{{ a.name }}</mat-option>
+        </mat-select>
+    </mat-form-field>
+    <mat-form-field *ngIf="dataMode === 'trunksystems' && systems.length" appearance="outline" class="full-width">
+        <mat-label>Trunk System</mat-label>
+        <mat-select [(value)]="selectedSystem" (selectionChange)="onSystemChange()">
+            <mat-option *ngFor="let s of systems" [value]="s.id">
+                {{ s.name }} ({{ s.type }} / {{ s.flavor }})
+            </mat-option>
+        </mat-select>
+    </mat-form-field>
+
+    <!-- Inner Tabs -->
+    <ng-container *ngIf="allTalkgroups.length">
+        <mat-tab-group [(selectedIndex)]="innerTab">
+            <!-- Data Tab — 3-level tree -->
+            <mat-tab label="Data">
+                <div class="data-toolbar">
+                    <button mat-stroked-button (click)="selectAll()">Select All</button>
+                    <button mat-stroked-button (click)="unselectAll()">Unselect All</button>
+                    <button mat-stroked-button (click)="expandAll()">Expand</button>
+                    <button mat-stroked-button (click)="collapseAll()">Collapse</button>
+                    <span class="spacer"></span>
+                    <span class="counter">{{ selectedCount }} / {{ totalCount }} selected</span>
+                </div>
+                <!-- Level 1 -->
+                <mat-accordion multi>
+                    <mat-expansion-panel *ngFor="let l1 of tree" [expanded]="l1.expanded"
+                        (opened)="l1.expanded = true" (closed)="l1.expanded = false">
+                        <mat-expansion-panel-header>
+                            <mat-panel-title>
+                                <mat-checkbox [checked]="isNodeAllSelected(l1)"
+                                    [indeterminate]="isNodePartial(l1)"
+                                    (change)="toggleNode(l1, $event.checked)"
+                                    (click)="$event.stopPropagation()">
+                                </mat-checkbox>
+                                <span class="cat-label">{{ l1.name }} ({{ nodeLeafCount(l1) }})</span>
+                            </mat-panel-title>
+                        </mat-expansion-panel-header>
+                        <!-- Level 2 -->
+                        <mat-accordion multi class="level2">
+                            <mat-expansion-panel *ngFor="let l2 of l1.children" [expanded]="l2.expanded"
+                                (opened)="l2.expanded = true" (closed)="l2.expanded = false">
+                                <mat-expansion-panel-header>
+                                    <mat-panel-title>
+                                        <mat-checkbox [checked]="isNodeAllSelected(l2)"
+                                            [indeterminate]="isNodePartial(l2)"
+                                            (change)="toggleNode(l2, $event.checked)"
+                                            (click)="$event.stopPropagation()">
+                                        </mat-checkbox>
+                                        <span class="cat-label">{{ l2.name }} ({{ l2.talkgroups.length }})</span>
+                                    </mat-panel-title>
+                                </mat-expansion-panel-header>
+                                <!-- Level 3: leaf talkgroups -->
+                                <div class="tg-list">
+                                    <div *ngFor="let tg of l2.talkgroups" class="tg-row">
+                                        <mat-checkbox [(ngModel)]="tg.selected"></mat-checkbox>
+                                        <span class="tg-id">{{ tg.decimal_id }}</span>
+                                        <span class="tg-alpha">{{ tg.alpha_tag }}</span>
+                                        <span class="tg-desc">{{ tg.description }}</span>
+                                        <span class="tg-mode">{{ tg.mode }}</span>
+                                        <span class="tg-tag">{{ tg.tag }}</span>
+                                    </div>
+                                </div>
+                            </mat-expansion-panel>
+                        </mat-accordion>
+                    </mat-expansion-panel>
+                </mat-accordion>
+            </mat-tab>
+
+            <!-- Tag Options/Misc Tab -->
+            <mat-tab label="Tag Options/Misc">
+                <div class="options-grid">
+                    <div class="options-col">
+                        <h3>Tags</h3>
+                        <mat-checkbox [(ngModel)]="tagRemoveSpaces">Automatically Remove Spaces from Tags</mat-checkbox>
+                        <mat-checkbox [(ngModel)]="tagNoModifySmall">Do not modify tags smaller than 16 characters</mat-checkbox>
+                        <mat-checkbox [(ngModel)]="tagUseShortAlpha">Use short Alpha Tag (if available)</mat-checkbox>
+                        <mat-checkbox [(ngModel)]="tagUpperCase">Convert To Upper Case</mat-checkbox>
+                    </div>
+                    <div class="options-col">
+                        <h3>Misc</h3>
+                        <mat-checkbox [(ngModel)]="miscNoEncrypted">Do NOT import encrypted talkgroups</mat-checkbox>
+                        <mat-checkbox [(ngModel)]="miscLockEncrypted">Lock Out Encrypted talkgroups</mat-checkbox>
+                        <mat-checkbox [(ngModel)]="miscNoTelemetry">Do NOT import Telemetry talkgroups</mat-checkbox>
+                        <mat-checkbox [(ngModel)]="miscAutoExpand">Auto Expand talkgroup list</mat-checkbox>
+                    </div>
+                </div>
+            </mat-tab>
+
+            <!-- Service Tags Tab -->
+            <mat-tab label="Service Tags">
+                <div class="service-tags-toolbar">
+                    <mat-checkbox [(ngModel)]="serviceTagsEnabled">Enable Service Tags Filter</mat-checkbox>
+                </div>
+                <div class="service-tags-grid" *ngIf="serviceTagsEnabled">
+                    <div *ngFor="let st of serviceTags" class="service-tag-item">
+                        <mat-checkbox [(ngModel)]="st.enabled">
+                            {{ st.name }}
+                            <span class="badge" *ngIf="st.count">({{ st.count }})</span>
+                        </mat-checkbox>
+                    </div>
+                </div>
+                <div class="service-tags-actions" *ngIf="serviceTagsEnabled">
+                    <button mat-raised-button color="primary" (click)="applyServiceTagFilter()">Apply Filter</button>
+                    <button mat-stroked-button (click)="serviceTagAllOn()">All On</button>
+                    <button mat-stroked-button (click)="serviceTagAllOff()">All Off</button>
+                </div>
+            </mat-tab>
+
+            <!-- TG Filters Tab -->
+            <mat-tab label="TG Filters">
+                <h3>Import only the following talkgroups:</h3>
+                <mat-checkbox [(ngModel)]="filterAnalog">Analog Talkgroups</mat-checkbox>
+                <mat-checkbox [(ngModel)]="filterDigital">Digital Talkgroups</mat-checkbox>
+                <mat-checkbox [(ngModel)]="filterMixed">Mixed Analog/Digital</mat-checkbox>
+                <mat-checkbox [(ngModel)]="filterTDMA">TDMA capable talkgroups</mat-checkbox>
+                <mat-checkbox [(ngModel)]="filterEncrypted">Fully Encrypted talkgroups</mat-checkbox>
+                <mat-checkbox [(ngModel)]="filterPartialEncrypted">Partial Encrypted talkgroups</mat-checkbox>
+                <div class="tg-filter-actions">
+                    <button mat-raised-button color="primary" (click)="applyTGFilter()">Apply Filter</button>
+                    <button mat-stroked-button (click)="tgFilterAllOn()">All On</button>
+                </div>
+            </mat-tab>
+
+            <!-- Update Info Tab -->
+            <mat-tab label="Update Info">
+                <h3>Frequencies/Talkgroups updated in the last 90 days: {{ updates.length }}</h3>
+                <mat-table [dataSource]="updates" *ngIf="updates.length">
+                    <ng-container matColumnDef="tg_id">
+                        <mat-header-cell *matHeaderCellDef>TGid</mat-header-cell>
+                        <mat-cell *matCellDef="let row">{{ row.tg_id || row.frequency }}</mat-cell>
+                    </ng-container>
+                    <ng-container matColumnDef="alpha_tag">
+                        <mat-header-cell *matHeaderCellDef>Alpha Tag</mat-header-cell>
+                        <mat-cell *matCellDef="let row">{{ row.alpha_tag }}</mat-cell>
+                    </ng-container>
+                    <ng-container matColumnDef="description">
+                        <mat-header-cell *matHeaderCellDef>Description</mat-header-cell>
+                        <mat-cell *matCellDef="let row">{{ row.description }}</mat-cell>
+                    </ng-container>
+                    <ng-container matColumnDef="service_tag">
+                        <mat-header-cell *matHeaderCellDef>Service Tag</mat-header-cell>
+                        <mat-cell *matCellDef="let row">{{ row.service_tag }}</mat-cell>
+                    </ng-container>
+                    <ng-container matColumnDef="last_updated">
+                        <mat-header-cell *matHeaderCellDef>Last Updated</mat-header-cell>
+                        <mat-cell *matCellDef="let row">{{ row.last_updated | date:'short' }}</mat-cell>
+                    </ng-container>
+                    <mat-header-row *matHeaderRowDef="['tg_id','alpha_tag','description','service_tag','last_updated']"></mat-header-row>
+                    <mat-row *matRowDef="let row; columns: ['tg_id','alpha_tag','description','service_tag','last_updated']"></mat-row>
+                </mat-table>
+            </mat-tab>
+        </mat-tab-group>
+    </ng-container>
+
+    <!-- Import to configuration — same pattern as CSV import -->
+    <section *ngIf="allTalkgroups.length">
+        <p class="mat-body">Import to configuration</p>
+        <p class="text-center">
+            <button mat-raised-button [disabled]="selectedCount === 0" (click)="import()">
+                Import to configuration ({{ selectedCount }} talkgroups)
+            </button>
+        </p>
+        <p *ngIf="selectedCount > 800" class="mat-caption mat-error text-center text-uppercase">
+            Warning, you are trying to import more than 800 talkgroups, {{ selectedCount }} in this case.
+            The graphic interface has not been designed for this number of talkgroups.
+            You can continue, but expect Rdio Scanner to be quite slow, if not unusable.
+        </p>
+    </section>
+</ng-container>
+
+<mat-progress-bar *ngIf="loading" mode="indeterminate"></mat-progress-bar>

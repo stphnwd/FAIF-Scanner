@@ -124,6 +124,8 @@ func main() {
 
 	http.HandleFunc("/api/admin/user-remove", controller.Admin.UserRemoveHandler)
 
+	RegisterRRHandlers(controller)
+
 	http.HandleFunc("/api/call-upload", controller.Api.CallUploadHandler)
 
 	http.HandleFunc("/api/trunk-recorder-call-upload", controller.Api.TrunkRecorderCallUploadHandler)

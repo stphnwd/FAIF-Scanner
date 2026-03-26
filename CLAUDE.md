@@ -74,6 +74,19 @@ NOT from the parent directory (go.mod is inside server/)
 - All SOAP calls use keyword arguments (not positional)
 - zeep Settings(strict=False) required — RR uses non-standard namespaces
 
+## RR_APP_KEY environment variable
+- The RR API key can be set via the RR_APP_KEY environment variable
+  in the systemd service file (Environment="RR_APP_KEY=your-key-here")
+- If set, it serves as the default fallback when no custom key is
+  stored in the database
+- Users can override with a custom key via the admin UI
+- "Restore Default API Key" button removes the custom key and
+  falls back to the environment variable
+- NEVER commit API keys to the repo or store them in source files
+- To set: edit /etc/systemd/system/faif-scanner-go.service (or -test),
+  set Environment="RR_APP_KEY=your-key", then sudo systemctl daemon-reload
+  and restart the service
+
 ## Do not commit
 - rdio-scanner (binary)
 - rdio-scanner.db, rdio-scanner.db-shm, rdio-scanner.db-wal
