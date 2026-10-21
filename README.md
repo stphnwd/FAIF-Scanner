@@ -1,5 +1,7 @@
 # FAIF Scanner
 
+**Version:** 26.4.0.0
+
 Fork of [rdio-scanner](https://github.com/chuot/rdio-scanner) (v6.6.3) with audio-on-disk storage, bulk download, adjustable page size, and Radio Reference import.
 
 ## Requirements
