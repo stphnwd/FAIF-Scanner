@@ -1,0 +1,68 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [master]
+
+permissions:
+  contents: read
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: README version matches the current quarter
+        # Pull requests only: a merge just before a quarter boundary must not
+        # fail the push to main and block the production promote below.
+        if: github.event_name == 'pull_request'
+        run: |
+          version=$(tr -d '\r' < README.md | grep -Eo '^\*\*Version:\*\* *[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+ *$' | head -1 | grep -Eo '[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+' || true)
+          if [ -z "$version" ]; then
+            echo "README.md has no '**Version:** YY.Q.feature.patch' line (four numeric fields, nothing after them)"; exit 1
+          fi
+          cur_year=$(date -u +%y); cur_qtr=$(( (10#$(date -u +%m) - 1) / 3 + 1 ))
+          year=${version%%.*}; rest=${version#*.}; qtr=${rest%%.*}
+          if [ "$((10#$year))" -eq "$((10#$cur_year))" ] && [ "$((10#$qtr))" -eq "$cur_qtr" ]; then
+            echo "ok: version $version is in quarter $cur_year.$cur_qtr (UTC)"
+          else
+            echo "README.md version is $version but the current quarter is $cur_year.$cur_qtr (UTC). Bump it to $cur_year.$cur_qtr.0.0."; exit 1
+          fi
+      - name: Placeholder for tests and lint
+        run: echo "Replace with real test and lint commands"
+
+  promote:
+    needs: checks
+    if: github.event_name == 'push' && github.ref == 'refs/heads/master'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: read
+    concurrency:
+      group: promote-production
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Refuse a commit that did not arrive through a pull request
+        # GitHub cannot block a direct push to main on a free private repo, so
+        # this job is the consequence: a commit that bypassed the PR flow never
+        # reaches production. A PR merge commit has two parents. A squash or
+        # rebase merge has one, so those fall through to the API, which lists
+        # the merged pull request a commit belongs to.
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          parents=$(git rev-list --parents -n 1 "$GITHUB_SHA" | wc -w)
+          if [ "$parents" -ge 3 ]; then
+            echo "ok: $GITHUB_SHA is a merge commit"; exit 0
+          fi
+          merged=$(gh api "repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA/pulls"             --jq '[.[] | select(.merged_at != null and .base.ref == "master")] | length')
+          if [ "${merged:-0}" -ge 1 ]; then
+            echo "ok: $GITHUB_SHA closed a merged pull request into master"; exit 0
+          fi
+          echo "refusing to promote: $GITHUB_SHA reached main without a pull request"; exit 1
+      - name: Fast-forward production to the tested commit
+        run: git push origin ${{ github.sha }}:refs/heads/production
